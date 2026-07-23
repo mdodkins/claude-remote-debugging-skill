@@ -1,0 +1,14 @@
+{
+  "name": "embedded-remote-debug",
+  "displayName": "Embedded Remote Debug",
+  "version": "1.0.0",
+  "description": "Debug a Cortex-M embedded target live over a GDB server (OpenOCD or SEGGER JLinkGDBServer), reached directly or through a reverse SSH tunnel, using a probe- and target-agnostic, evidence-first root-cause methodology.",
+  "author": {
+    "name": "mdodkins",
+    "url": "https://github.com/mdodkins"
+  },
+  "homepage": "https://github.com/mdodkins/claude-remote-debugging-skill",
+  "repository": "https://github.com/mdodkins/claude-remote-debugging-skill",
+  "license": "MIT",
+  "keywords": ["embedded", "cortex-m", "gdb", "openocd", "jlink", "stm32", "efm32", "hardware", "remote-debug", "swd"]
+}

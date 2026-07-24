@@ -1,8 +1,12 @@
 // Command serial-capture streams a board's serial console to stdout, an
-// optional logfile, and an optional TCP port — reconnecting automatically when
-// the board resets and the USB serial re-enumerates. It is capture-only (it
-// never writes to the port). Pair it with a reverse SSH tunnel to read a remote
-// board's console from another machine (same idea as the GDB server port).
+// optional logfile, and (optionally) a TCP port — reconnecting automatically
+// when the board resets and the USB serial re-enumerates. It is capture-only
+// (it never writes to the port).
+//
+// With -tunnel it also brings up the reverse SSH tunnel itself, so a single
+// command exposes the console on a remote host: it runs the system `ssh`
+// (respecting your keys, ~/.ssh/config and password prompt) and warns clearly if
+// the tunnel or the serial port has a problem.
 package main
 
 import (
@@ -13,13 +17,16 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"go.bug.st/serial"
 
 	"serialcapture/internal/capture"
+	"serialcapture/internal/tunnel"
 )
 
 // serialOpener opens the serial port, first waiting for the device path to
@@ -52,12 +59,15 @@ func (o *serialOpener) Open(ctx context.Context) (io.ReadCloser, error) {
 }
 
 func main() {
-	portPath := flag.String("port", "", "serial device path, e.g. /dev/ttyUSB0 (a /dev/serial/by-id/... path survives re-enumeration best)")
+	portPath := flag.String("port", "", "serial device path, e.g. /dev/ttyUSB0 (prefer a /dev/serial/by-id/... path — it survives re-enumeration)")
 	baud := flag.Int("baud", 115200, "baud rate (C-Sound console is 115200 8N1)")
 	logPath := flag.String("log", "", "also append captured lines to this file")
-	listen := flag.String("listen", "", "also serve the live stream on this TCP address, e.g. :5555")
-	reconnect := flag.Duration("reconnect", time.Second, "delay between reconnect attempts")
-	poll := flag.Duration("poll", 500*time.Millisecond, "how often to check for the device to reappear")
+	tunnelTarget := flag.String("tunnel", "", "reverse-tunnel the stream to this SSH target, e.g. you@host.com — brings the tunnel up itself (prompts for your ssh password if you don't use keys)")
+	tunnelPort := flag.Int("tunnel-port", 5555, "TCP port used on both ends of the tunnel")
+	listen := flag.String("listen", "", "local-only: serve the stream on this TCP address, e.g. :5555 (ignored when -tunnel is set)")
+	scrollback := flag.Int("scrollback", 200, "lines of recent history replayed to a newly-connected client")
+	reconnect := flag.Duration("reconnect", time.Second, "delay between serial reconnect attempts")
+	poll := flag.Duration("poll", 500*time.Millisecond, "how often to check for the serial device to reappear")
 	flag.Parse()
 
 	if *portPath == "" {
@@ -74,22 +84,33 @@ func main() {
 	if *logPath != "" {
 		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			log.Fatalf("serial-capture: open log %q: %v", *logPath, err)
+			log.Fatalf("serial-capture: cannot open log %q: %v", *logPath, err)
 		}
 		defer f.Close()
 		sinks = append(sinks, func(l string) { fmt.Fprintln(f, l) })
 	}
 
-	if *listen != "" {
-		bc := capture.NewBroadcaster()
-		ln, err := net.Listen("tcp", *listen)
+	// A tunnel implies serving on 127.0.0.1:<tunnel-port> (both ends pinned to
+	// IPv4 to avoid localhost v4/v6 mismatches). Otherwise -listen is optional.
+	serveAddr := *listen
+	if *tunnelTarget != "" {
+		serveAddr = fmt.Sprintf("127.0.0.1:%d", *tunnelPort)
+	}
+
+	if serveAddr != "" {
+		bc := capture.NewBroadcaster(*scrollback)
+		ln, err := net.Listen("tcp", serveAddr)
 		if err != nil {
-			log.Fatalf("serial-capture: listen %q: %v", *listen, err)
+			log.Fatalf("serial-capture: cannot listen on %s: %v", serveAddr, err)
 		}
 		defer ln.Close()
 		go acceptLoop(ctx, ln, bc)
 		sinks = append(sinks, bc.Broadcast)
-		log.Printf("serial-capture: serving live stream on %s", *listen)
+		log.Printf("serial-capture: serving stream on %s (scrollback %d lines)", serveAddr, *scrollback)
+	}
+
+	if *tunnelTarget != "" {
+		startTunnel(ctx, *tunnelTarget, *tunnelPort)
 	}
 
 	emit := func(l string) {
@@ -98,9 +119,39 @@ func main() {
 		}
 	}
 
+	if _, err := os.Stat(*portPath); err != nil {
+		log.Printf("serial-capture: %s not present yet — waiting for it to appear", *portPath)
+	}
 	log.Printf("serial-capture: capturing %s @ %d 8N1 (auto-reconnect on reset)", *portPath, *baud)
 	o := &serialOpener{path: *portPath, baud: *baud, poll: *poll}
 	capture.Run(ctx, o, time.Now, emit, *reconnect)
+}
+
+// startTunnel launches the reverse SSH tunnel as a child process, inheriting the
+// terminal so ssh's own password prompt works, and warns loudly if it exits.
+func startTunnel(ctx context.Context, target string, port int) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		log.Fatalf("serial-capture: -tunnel needs the `ssh` client on your PATH: %v", err)
+	}
+	args := tunnel.SSHArgs(target, port, port)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Stdin = os.Stdin   // let ssh prompt for a password if needed
+	cmd.Stdout = os.Stderr // keep our stdout (the captured stream) clean
+	cmd.Stderr = os.Stderr
+
+	log.Printf("serial-capture: opening reverse tunnel — ssh %s", strings.Join(args, " "))
+	log.Printf("serial-capture: (enter your ssh password if prompted; remote clients read localhost:%d on %s)", port, target)
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("serial-capture: failed to start ssh: %v", err)
+	}
+
+	go func() {
+		err := cmd.Wait()
+		if ctx.Err() != nil {
+			return // our own shutdown killed it
+		}
+		log.Printf("serial-capture: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or remote port %d already in use on the server.", err, port)
+	}()
 }
 
 // acceptLoop registers each incoming TCP client with the broadcaster.

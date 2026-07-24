@@ -622,18 +622,20 @@ TCP and reverse-tunnelled.
 `socat`/`cat` bridge — **survives board resets**: it reconnects automatically
 when the board re-enumerates and marks every connect/disconnect in the stream, so
 a power-cycle shows up as a clear marker instead of a silent gap. It is
-capture-only (never writes to the port). Build and usage are in
-`tools/serial-capture/README.md`; the essence:
+capture-only (never writes to the port), replays recent scrollback to whoever
+connects, and can **bring up the reverse SSH tunnel itself** — one command:
 
 ```bash
-# where the board is plugged in:
-serial-capture -port /dev/serial/by-id/usb-...-if00 -baud 115200 \
-    -listen 127.0.0.1:5555 -log board.log &
-ssh -N -R 5555:localhost:5555 <agent-host>      # same reverse tunnel as the GDB port
+# where the board is plugged in (brings up the tunnel; prompts for your ssh password):
+serial-capture -port /dev/serial/by-id/usb-...-if00 -baud 115200 -tunnel <agent-host>
 
 # on the agent host:
-nc localhost 5555        # live, timestamped console with reconnect markers
+nc localhost 5555        # live, timestamped console with scrollback + reset markers
 ```
+
+It wraps the system `ssh` (keys, `~/.ssh/config`, password prompt all work) and
+warns clearly if the tunnel or the port has a problem. Build and full flag list
+are in `tools/serial-capture/README.md`.
 
 Prefer a `/dev/serial/by-id/...` path for `-port` — it stays stable across
 re-enumeration, whereas a bare `/dev/ttyACMx` can change number on reset. Read

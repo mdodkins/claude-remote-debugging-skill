@@ -609,3 +609,36 @@ investigation, roughly in order of how cheap they are to check:
   firmware's failure, on the same un-power-cycled hardware, that's direct
   evidence there's no persistent latched state to clear, and the cause is
   elsewhere.
+
+## Serial console capture (companion to the GDB link)
+
+The board's UART/`printf` console is a **separate channel** from the GDB link —
+GDB gives you registers, memory, and control; the serial console gives you the
+firmware's own log (boot banner, config dump, runtime state). When the agent is
+remote, that console has to reach it the same way the GDB port does: bridged to
+TCP and reverse-tunnelled.
+
+`tools/serial-capture` (in this repo) does that, and — unlike a plain
+`socat`/`cat` bridge — **survives board resets**: it reconnects automatically
+when the board re-enumerates and marks every connect/disconnect in the stream, so
+a power-cycle shows up as a clear marker instead of a silent gap. It is
+capture-only (never writes to the port). Build and usage are in
+`tools/serial-capture/README.md`; the essence:
+
+```bash
+# where the board is plugged in:
+serial-capture -port /dev/serial/by-id/usb-...-if00 -baud 115200 \
+    -listen 127.0.0.1:5555 -log board.log &
+ssh -N -R 5555:localhost:5555 <agent-host>      # same reverse tunnel as the GDB port
+
+# on the agent host:
+nc localhost 5555        # live, timestamped console with reconnect markers
+```
+
+Prefer a `/dev/serial/by-id/...` path for `-port` — it stays stable across
+re-enumeration, whereas a bare `/dev/ttyACMx` can change number on reset. Read
+the baud from the firmware's UART init (e.g. C-Sound is 115200 8N1).
+
+This pairs naturally with a live GDB session: watch the boot/config prints stream
+past while you step register settings, so firmware-reported state and on-target
+register state are visible side by side.

@@ -618,7 +618,7 @@ firmware's own log (boot banner, config dump, runtime state). When the agent is
 remote, that console has to reach it the same way the GDB port does: bridged to
 TCP and reverse-tunnelled.
 
-`tools/serial-capture` (in this repo) does that, and — unlike a plain
+`tools/debug-bridge` (in this repo) does that, and — unlike a plain
 `socat`/`cat` bridge — **survives board resets**: it reconnects automatically
 when the board re-enumerates and marks every connect/disconnect in the stream, so
 a power-cycle shows up as a clear marker instead of a silent gap. It is
@@ -627,7 +627,7 @@ connects, and can **bring up the reverse SSH tunnel itself** — one command:
 
 ```bash
 # where the board is plugged in (brings up the tunnel; prompts for your ssh password):
-serial-capture -port /dev/serial/by-id/usb-...-if00 -baud 115200 -tunnel <agent-host>
+debug-bridge -port /dev/serial/by-id/usb-...-if00 -baud 115200 -tunnel <agent-host>
 
 # on the agent host:
 nc localhost 5555        # live, timestamped console with scrollback + reset markers
@@ -635,7 +635,7 @@ nc localhost 5555        # live, timestamped console with scrollback + reset mar
 
 It wraps the system `ssh` (keys, `~/.ssh/config`, password prompt all work) and
 warns clearly if the tunnel or the port has a problem. Build and full flag list
-are in `tools/serial-capture/README.md`.
+are in `tools/debug-bridge/README.md`.
 
 Prefer a `/dev/serial/by-id/...` path for `-port` — it stays stable across
 re-enumeration, whereas a bare `/dev/ttyACMx` can change number on reset. Read

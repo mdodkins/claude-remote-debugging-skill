@@ -1,4 +1,4 @@
-// Package capture contains the serial-capture core: reading timestamped lines
+// Package capture contains the debug-bridge core: reading timestamped lines
 // from a stream and running a reconnect loop that survives board resets. It is
 // deliberately free of any serial/OS dependency so it can be unit-tested with
 // plain readers; the real serial port is wired in by the caller.
@@ -43,12 +43,12 @@ type Opener interface {
 
 // Run streams timestamped lines from the port to emit, reconnecting whenever the
 // stream ends — e.g. when the board resets and the USB serial re-enumerates.
-// Each connect/disconnect transition is emitted as a "[serial-capture]" marker
+// Each connect/disconnect transition is emitted as a "[debug-bridge]" marker
 // line so a reset shows up clearly in the log rather than as a silent gap. It
 // retries a failed open after `retry`. Run returns when ctx is cancelled.
 func Run(ctx context.Context, o Opener, now Clock, emit func(string), retry time.Duration) error {
 	marker := func(msg string) {
-		emit(now().Format(TimeFormat) + " [serial-capture] " + msg)
+		emit(now().Format(TimeFormat) + " [debug-bridge] " + msg)
 	}
 	for {
 		if ctx.Err() != nil {

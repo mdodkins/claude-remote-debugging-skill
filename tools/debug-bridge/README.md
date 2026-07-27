@@ -1,4 +1,4 @@
-# serial-capture
+# debug-bridge
 
 A small, capture-only serial console reader that **survives board resets** and
 can **bring up its own reverse SSH tunnel**. It streams a board's UART console to
@@ -6,15 +6,15 @@ stdout, an optional logfile, and (optionally) a remote host — timestamping eve
 line, reconnecting automatically when the board resets and the USB serial
 re-enumerates, and replaying recent scrollback to anyone who connects.
 
-Each connect/disconnect is written as a `[serial-capture]` marker line, so a
+Each connect/disconnect is written as a `[debug-bridge]` marker line, so a
 reset is obvious in the log instead of a silent gap. It never writes to the port
 (capture only).
 
 ## Build
 
 ```bash
-cd tools/serial-capture
-go build -o serial-capture .
+cd tools/debug-bridge
+go build -o debug-bridge .
 ```
 
 Produces a single static binary (Linux/macOS/Windows), Go 1.18+.
@@ -22,12 +22,12 @@ Produces a single static binary (Linux/macOS/Windows), Go 1.18+.
 ## Usage — one command, remote agent
 
 To let an agent on another machine read the console, point `-tunnel` at the
-agent's host. serial-capture opens the port **and brings up the reverse SSH
+agent's host. debug-bridge opens the port **and brings up the reverse SSH
 tunnel itself** — you just get ssh's normal password prompt (or it uses your
 keys/agent silently):
 
 ```bash
-serial-capture -port /dev/serial/by-id/usb-...-if00 -tunnel you@agent-host.com
+debug-bridge -port /dev/serial/by-id/usb-...-if00 -tunnel you@agent-host.com
 ```
 
 It wraps the system `ssh`, so your `~/.ssh/config`, known_hosts, keys and
@@ -44,7 +44,7 @@ start the GDB server itself, since it needs the probe):
 ```bash
 # on the machine with the board:
 sh start-gdb-server.sh &                                   # J-Link GDB server on 2331
-serial-capture -port /dev/serial/by-id/... -tunnel you@agent-host.com -gdb-port 2331
+debug-bridge -port /dev/serial/by-id/... -tunnel you@agent-host.com -gdb-port 2331
 # agent side: nc localhost 5555 (console) and gdb → localhost:2331 (registers)
 ```
 
@@ -59,7 +59,7 @@ Without `-tunnel` it just captures locally (stdout + optional log), and can serv
 a local TCP port you tunnel yourself:
 
 ```bash
-serial-capture -port /dev/ttyUSB0 -baud 115200 -log board.log -listen :5555
+debug-bridge -port /dev/ttyUSB0 -baud 115200 -log board.log -listen :5555
 ```
 
 ## Flags

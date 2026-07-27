@@ -1,4 +1,4 @@
-module serialcapture
+module debugbridge
 
 go 1.18
 

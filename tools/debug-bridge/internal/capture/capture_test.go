@@ -115,10 +115,10 @@ func TestRunRetriesWhenDeviceIsNotYetPresent(t *testing.T) {
 	Run(ctx, o, fixedClock(testTime), emit, 0)
 
 	want := []string{
-		"2026-07-24 14:01:12.345 [serial-capture] open failed: no device; retrying",
-		"2026-07-24 14:01:12.345 [serial-capture] connected",
+		"2026-07-24 14:01:12.345 [debug-bridge] open failed: no device; retrying",
+		"2026-07-24 14:01:12.345 [debug-bridge] connected",
 		"2026-07-24 14:01:12.345 boot",
-		"2026-07-24 14:01:12.345 [serial-capture] disconnected (eof)",
+		"2026-07-24 14:01:12.345 [debug-bridge] disconnected (eof)",
 	}
 	if !reflect.DeepEqual(*got, want) {
 		t.Errorf("got %#v\nwant %#v", *got, want)
@@ -136,12 +136,12 @@ func TestRunReconnectsAfterStreamEndsAndMarksTransitions(t *testing.T) {
 	Run(ctx, o, fixedClock(testTime), emit, 0)
 
 	want := []string{
-		"2026-07-24 14:01:12.345 [serial-capture] connected",
+		"2026-07-24 14:01:12.345 [debug-bridge] connected",
 		"2026-07-24 14:01:12.345 boot1",
-		"2026-07-24 14:01:12.345 [serial-capture] disconnected (eof)",
-		"2026-07-24 14:01:12.345 [serial-capture] connected",
+		"2026-07-24 14:01:12.345 [debug-bridge] disconnected (eof)",
+		"2026-07-24 14:01:12.345 [debug-bridge] connected",
 		"2026-07-24 14:01:12.345 boot2",
-		"2026-07-24 14:01:12.345 [serial-capture] disconnected (eof)",
+		"2026-07-24 14:01:12.345 [debug-bridge] disconnected (eof)",
 	}
 	if !reflect.DeepEqual(*got, want) {
 		t.Errorf("got %#v\nwant %#v", *got, want)

@@ -1,4 +1,4 @@
-// Command serial-capture streams a board's serial console to stdout, an
+// Command debug-bridge streams a board's serial console to stdout, an
 // optional logfile, and (optionally) a TCP port — reconnecting automatically
 // when the board resets and the USB serial re-enumerates. It is capture-only
 // (it never writes to the port).
@@ -25,8 +25,8 @@ import (
 
 	"go.bug.st/serial"
 
-	"serialcapture/internal/capture"
-	"serialcapture/internal/tunnel"
+	"debugbridge/internal/capture"
+	"debugbridge/internal/tunnel"
 )
 
 // serialOpener opens the serial port, first waiting for the device path to
@@ -72,7 +72,7 @@ func main() {
 	flag.Parse()
 
 	if *portPath == "" {
-		fmt.Fprintln(os.Stderr, "serial-capture: -port is required")
+		fmt.Fprintln(os.Stderr, "debug-bridge: -port is required")
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -85,7 +85,7 @@ func main() {
 	if *logPath != "" {
 		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			log.Fatalf("serial-capture: cannot open log %q: %v", *logPath, err)
+			log.Fatalf("debug-bridge: cannot open log %q: %v", *logPath, err)
 		}
 		defer f.Close()
 		sinks = append(sinks, func(l string) { fmt.Fprintln(f, l) })
@@ -102,12 +102,12 @@ func main() {
 		bc := capture.NewBroadcaster(*scrollback)
 		ln, err := net.Listen("tcp", serveAddr)
 		if err != nil {
-			log.Fatalf("serial-capture: cannot listen on %s: %v", serveAddr, err)
+			log.Fatalf("debug-bridge: cannot listen on %s: %v", serveAddr, err)
 		}
 		defer ln.Close()
 		go acceptLoop(ctx, ln, bc)
 		sinks = append(sinks, bc.Broadcast)
-		log.Printf("serial-capture: serving stream on %s (scrollback %d lines)", serveAddr, *scrollback)
+		log.Printf("debug-bridge: serving stream on %s (scrollback %d lines)", serveAddr, *scrollback)
 	}
 
 	if *tunnelTarget != "" {
@@ -125,9 +125,9 @@ func main() {
 	}
 
 	if _, err := os.Stat(*portPath); err != nil {
-		log.Printf("serial-capture: %s not present yet — waiting for it to appear", *portPath)
+		log.Printf("debug-bridge: %s not present yet — waiting for it to appear", *portPath)
 	}
-	log.Printf("serial-capture: capturing %s @ %d 8N1 (auto-reconnect on reset)", *portPath, *baud)
+	log.Printf("debug-bridge: capturing %s @ %d 8N1 (auto-reconnect on reset)", *portPath, *baud)
 	o := &serialOpener{path: *portPath, baud: *baud, poll: *poll}
 	capture.Run(ctx, o, time.Now, emit, *reconnect)
 }
@@ -138,7 +138,7 @@ func main() {
 // it exits.
 func startTunnel(ctx context.Context, target string, ports []int) {
 	if _, err := exec.LookPath("ssh"); err != nil {
-		log.Fatalf("serial-capture: -tunnel needs the `ssh` client on your PATH: %v", err)
+		log.Fatalf("debug-bridge: -tunnel needs the `ssh` client on your PATH: %v", err)
 	}
 	args := tunnel.SSHArgs(target, ports...)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
@@ -146,10 +146,10 @@ func startTunnel(ctx context.Context, target string, ports []int) {
 	cmd.Stdout = os.Stderr // keep our stdout (the captured stream) clean
 	cmd.Stderr = os.Stderr
 
-	log.Printf("serial-capture: opening reverse tunnel — ssh %s", strings.Join(args, " "))
-	log.Printf("serial-capture: (enter your ssh password if prompted; forwarding ports %v to %s)", ports, target)
+	log.Printf("debug-bridge: opening reverse tunnel — ssh %s", strings.Join(args, " "))
+	log.Printf("debug-bridge: (enter your ssh password if prompted; forwarding ports %v to %s)", ports, target)
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("serial-capture: failed to start ssh: %v", err)
+		log.Fatalf("debug-bridge: failed to start ssh: %v", err)
 	}
 
 	go func() {
@@ -157,7 +157,7 @@ func startTunnel(ctx context.Context, target string, ports []int) {
 		if ctx.Err() != nil {
 			return // our own shutdown killed it
 		}
-		log.Printf("serial-capture: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or a forwarded port %v already in use on the server.", err, ports)
+		log.Printf("debug-bridge: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or a forwarded port %v already in use on the server.", err, ports)
 	}()
 }
 

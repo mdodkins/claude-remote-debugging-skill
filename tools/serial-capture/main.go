@@ -63,7 +63,8 @@ func main() {
 	baud := flag.Int("baud", 115200, "baud rate (C-Sound console is 115200 8N1)")
 	logPath := flag.String("log", "", "also append captured lines to this file")
 	tunnelTarget := flag.String("tunnel", "", "reverse-tunnel the stream to this SSH target, e.g. you@host.com — brings the tunnel up itself (prompts for your ssh password if you don't use keys)")
-	tunnelPort := flag.Int("tunnel-port", 5555, "TCP port used on both ends of the tunnel")
+	tunnelPort := flag.Int("tunnel-port", 5555, "TCP port used on both ends of the serial tunnel")
+	gdbPort := flag.Int("gdb-port", 0, "also forward this port through the tunnel, e.g. 2331 for the J-Link GDB server (0 = serial only)")
 	listen := flag.String("listen", "", "local-only: serve the stream on this TCP address, e.g. :5555 (ignored when -tunnel is set)")
 	scrollback := flag.Int("scrollback", 200, "lines of recent history replayed to a newly-connected client")
 	reconnect := flag.Duration("reconnect", time.Second, "delay between serial reconnect attempts")
@@ -110,7 +111,11 @@ func main() {
 	}
 
 	if *tunnelTarget != "" {
-		startTunnel(ctx, *tunnelTarget, *tunnelPort)
+		ports := []int{*tunnelPort}
+		if *gdbPort > 0 {
+			ports = append(ports, *gdbPort)
+		}
+		startTunnel(ctx, *tunnelTarget, ports)
 	}
 
 	emit := func(l string) {
@@ -127,20 +132,22 @@ func main() {
 	capture.Run(ctx, o, time.Now, emit, *reconnect)
 }
 
-// startTunnel launches the reverse SSH tunnel as a child process, inheriting the
-// terminal so ssh's own password prompt works, and warns loudly if it exits.
-func startTunnel(ctx context.Context, target string, port int) {
+// startTunnel launches the reverse SSH tunnel as a child process, forwarding
+// each of `ports` (the serial stream, and optionally the J-Link GDB port). It
+// inherits the terminal so ssh's own password prompt works, and warns loudly if
+// it exits.
+func startTunnel(ctx context.Context, target string, ports []int) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		log.Fatalf("serial-capture: -tunnel needs the `ssh` client on your PATH: %v", err)
 	}
-	args := tunnel.SSHArgs(target, port, port)
+	args := tunnel.SSHArgs(target, ports...)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = os.Stdin   // let ssh prompt for a password if needed
 	cmd.Stdout = os.Stderr // keep our stdout (the captured stream) clean
 	cmd.Stderr = os.Stderr
 
 	log.Printf("serial-capture: opening reverse tunnel — ssh %s", strings.Join(args, " "))
-	log.Printf("serial-capture: (enter your ssh password if prompted; remote clients read localhost:%d on %s)", port, target)
+	log.Printf("serial-capture: (enter your ssh password if prompted; forwarding ports %v to %s)", ports, target)
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("serial-capture: failed to start ssh: %v", err)
 	}
@@ -150,7 +157,7 @@ func startTunnel(ctx context.Context, target string, port int) {
 		if ctx.Err() != nil {
 			return // our own shutdown killed it
 		}
-		log.Printf("serial-capture: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or remote port %d already in use on the server.", err, port)
+		log.Printf("serial-capture: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or a forwarded port %v already in use on the server.", err, ports)
 	}()
 }
 

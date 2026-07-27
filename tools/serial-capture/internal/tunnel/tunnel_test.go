@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestSSHArgsSamePortBothEnds(t *testing.T) {
-	got := SSHArgs("me@shard.example.com", 5555, 5555)
+func TestSSHArgsSinglePort(t *testing.T) {
+	got := SSHArgs("me@shard.example.com", 5555)
 	want := []string{
 		"-N",
 		"-o", "ExitOnForwardFailure=yes",
@@ -20,18 +20,20 @@ func TestSSHArgsSamePortBothEnds(t *testing.T) {
 	}
 }
 
-func TestSSHArgsDistinctRemotePort(t *testing.T) {
-	got := SSHArgs("user@host", 6000, 5555)
-	// remote:127.0.0.1:local
-	want := "6000:127.0.0.1:5555"
-	found := false
+func TestSSHArgsMultiplePortsEachGetAForward(t *testing.T) {
+	// serial + GDB in one tunnel
+	got := SSHArgs("user@host", 5555, 2331)
+
+	// both ports appear as their own -R, and the target is last
+	wantForwards := []string{"5555:127.0.0.1:5555", "2331:127.0.0.1:2331"}
+	var forwards []string
 	for i, a := range got {
-		if a == "-R" && i+1 < len(got) && got[i+1] == want {
-			found = true
+		if a == "-R" && i+1 < len(got) {
+			forwards = append(forwards, got[i+1])
 		}
 	}
-	if !found {
-		t.Errorf("expected -R %q in %#v", want, got)
+	if !reflect.DeepEqual(forwards, wantForwards) {
+		t.Errorf("forwards = %#v, want %#v", forwards, wantForwards)
 	}
 	if got[len(got)-1] != "user@host" {
 		t.Errorf("target should be last arg, got %#v", got)

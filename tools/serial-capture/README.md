@@ -37,6 +37,17 @@ password all work as usual. Then on the agent host:
 nc localhost 5555        # live, timestamped console — with scrollback + reset markers
 ```
 
+To give the agent the **debug probe too**, add `-gdb-port` — the same tunnel then
+also forwards the J-Link GDB port, so one command covers both channels (you still
+start the GDB server itself, since it needs the probe):
+
+```bash
+# on the machine with the board:
+sh start-gdb-server.sh &                                   # J-Link GDB server on 2331
+serial-capture -port /dev/serial/by-id/... -tunnel you@agent-host.com -gdb-port 2331
+# agent side: nc localhost 5555 (console) and gdb → localhost:2331 (registers)
+```
+
 It **warns clearly** if something's wrong rather than failing silently: ssh can't
 connect / auth fails, the remote port is already in use (via
 `ExitOnForwardFailure`), or the serial port is missing/busy. If the tunnel drops,
@@ -58,7 +69,8 @@ serial-capture -port /dev/ttyUSB0 -baud 115200 -log board.log -listen :5555
 | `-port` | (required) | Serial device path. Prefer a stable `/dev/serial/by-id/...` path — it survives re-enumeration; a bare `/dev/ttyACMx` can change number on reset. |
 | `-baud` | `115200` | Baud rate (8N1). The C-Sound console is 115200 8N1. |
 | `-tunnel` | (none) | SSH target, e.g. `you@host`. Brings up a reverse tunnel to it and serves the stream there. Implies serving on `127.0.0.1:<tunnel-port>`. |
-| `-tunnel-port` | `5555` | TCP port used on both ends of the tunnel. |
+| `-tunnel-port` | `5555` | TCP port used on both ends of the serial tunnel. |
+| `-gdb-port` | `0` | Also forward this port through the same tunnel, e.g. `2331` for the J-Link GDB server, so the agent gets **both** the serial console and the debug probe. `0` = serial only. |
 | `-log` | (none) | Also append captured lines to this file. |
 | `-listen` | (none) | Local-only: serve on this TCP address, e.g. `:5555` (ignored when `-tunnel` is set). |
 | `-scrollback` | `200` | Lines of recent history replayed to a newly-connected client (so connecting mid-session shows context, not a blank screen). `0` disables. |

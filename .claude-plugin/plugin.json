@@ -1,8 +1,8 @@
 {
   "name": "embedded-remote-debug",
   "displayName": "Embedded Remote Debug",
-  "version": "1.0.0",
-  "description": "Debug a Cortex-M embedded target live over a GDB server (OpenOCD or SEGGER JLinkGDBServer), reached directly or through a reverse SSH tunnel, using a probe- and target-agnostic, evidence-first root-cause methodology.",
+  "version": "1.1.0",
+  "description": "Debug a Cortex-M embedded target live over a GDB server (OpenOCD or SEGGER JLinkGDBServer), reached directly or through a reverse SSH tunnel, using a probe- and target-agnostic, evidence-first root-cause methodology. Includes debug-bridge, which tunnels the serial console, the GDB port and (with -local) a tmux window on the developer's machine to the agent.",
   "author": {
     "name": "mdodkins",
     "url": "https://github.com/mdodkins"

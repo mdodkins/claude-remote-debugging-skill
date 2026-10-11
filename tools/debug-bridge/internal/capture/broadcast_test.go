@@ -81,3 +81,27 @@ func TestBroadcastDropsClientWhoseWriteFails(t *testing.T) {
 		t.Errorf("good client got %q", good.String())
 	}
 }
+
+func TestAddBannerWritesItAfterTheReplayAndBeforeLiveLines(t *testing.T) {
+	b := NewBroadcaster(10)
+	b.Broadcast("old-1")
+	b.Broadcast("old-2")
+	var buf strings.Builder
+	b.AddBanner(&buf, "[debug-bridge] live")
+	b.Broadcast("new-1")
+	want := "old-1\nold-2\n[debug-bridge] live\nnew-1\n"
+	if got := buf.String(); got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestAddBannerEmptyBannerIsPlainAdd(t *testing.T) {
+	b := NewBroadcaster(10)
+	b.Broadcast("old")
+	var buf strings.Builder
+	b.AddBanner(&buf, "")
+	b.Broadcast("new")
+	if got := buf.String(); got != "old\nnew\n" {
+		t.Errorf("got %q", got)
+	}
+}

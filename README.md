@@ -29,6 +29,12 @@ Silicon Labs EFM32, Nordic nRF, and any other SWD/JTAG MCU.
 5. **Fixes, rebuilds, re-verifies** the exact reproduction, then runs the
    full regression — and reports with the actual evidence.
 
+The companion tool `tools/debug-bridge` carries the board's **serial console**
+and the **GDB port** to a remote agent over one self-made reverse SSH tunnel,
+and with `-local` opens a **tmux window on your machine** the agent can type
+into and read from — so the same skill helps with ordinary programs on your
+own box, not just firmware, while you watch every command land.
+
 ## GDB server quick reference
 
 | | OpenOCD | SEGGER JLinkGDBServer |

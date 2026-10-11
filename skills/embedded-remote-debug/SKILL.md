@@ -1,6 +1,6 @@
 ---
 name: embedded-remote-debug
-description: Debug a Cortex-M embedded target (STM32, EFM32/Silicon Labs, nRF, or any SWD/JTAG MCU) live over a GDB server — OpenOCD or SEGGER JLinkGDBServer — reached at localhost:<port>, whether directly (probe on the same machine) or through a reverse SSH tunnel (agent on a remote box). Use when the user reports a crash, hang, or unexpected on-target behavior and asks you to debug it, or mentions "the debug tunnel" / "debug on hardware" / a J-Link or ST-Link probe. Reads the project's own gdb-server and load scripts first, verifies the link is live, walks the user through troubleshooting if it's not, then applies a systematic, evidence-first root-cause methodology instead of guessing from source alone.
+description: Debug a Cortex-M embedded target (STM32, EFM32/Silicon Labs, nRF, or any SWD/JTAG MCU) live over a GDB server — OpenOCD or SEGGER JLinkGDBServer — reached at localhost:<port>, whether directly (probe on the same machine) or through a reverse SSH tunnel (agent on a remote box). Use when the user reports a crash, hang, or unexpected on-target behavior and asks you to debug it, or mentions "the debug tunnel" / "debug on hardware" / a J-Link or ST-Link probe. Reads the project's own gdb-server and load scripts first, verifies the link is live, walks the user through troubleshooting if it's not, then applies a systematic, evidence-first root-cause methodology instead of guessing from source alone. Also covers `debug-bridge -local`, which gives the agent a tmux window on the user's own machine for debugging ordinary (non-embedded) programs there.
 ---
 
 # Embedded Remote Debug
@@ -644,3 +644,47 @@ the baud from the firmware's UART init (e.g. C-Sound is 115200 8N1).
 This pairs naturally with a live GDB session: watch the boot/config prints stream
 past while you step register settings, so firmware-reported state and on-target
 register state are visible side by side.
+
+## Local window: a shell on the user's machine (`debug-bridge -local`)
+
+Not every problem is on a board. When the user is developing on their own
+machine and you are remote, `debug-bridge -local` gives you a **tmux window on
+their machine** that you can type into and read from, through the same reverse
+tunnel — and they watch every command land, because it is a real tmux window in
+front of them (a new window in their current tmux session, or a detached
+session they attach to). Whatever runs in it — a shell, `make`, `gdb`, a
+Python REPL, their own program — is as visible to them as to you.
+
+```bash
+# on the user's machine, in the project directory (the window's shell starts here):
+debug-bridge -local -tunnel <agent-host>           # window served on 127.0.0.1:5556 both ends
+# add -port ... -gdb-port ... to carry the serial console and a probe in the same tunnel
+
+# on the agent host — one command in, its output out:
+debug-bridge -connect 127.0.0.1:5556 -cmd 'make 2>&1 | tail -20' -until '\$ $' -timeout 120s
+```
+
+How to drive it well:
+
+- **Use `-until` with the prompt pattern** (`'\$ $'` for bash/zsh, `'>>> $'` for
+  Python, `'\(gdb\) $'` for gdb) so the client returns exactly when the command
+  finishes. Without `-until` it returns after `-quiet` (default 2 s) of silence —
+  fine for quick commands, wrong for a build that pauses to think.
+- **A `124` exit means the timeout hit, not that the command failed** — it is
+  still running in the window. Connect again with no `-cmd` to keep reading, or
+  send `^C`.
+- **Control keys are their own lines:** `-cmd '^C'` interrupts, `^D` sends EOF
+  (ends a REPL), `^Z` suspends, `^L` clears. An empty `-cmd ''` is just Enter.
+  Anything else is typed literally and followed by Enter.
+- **The window has state.** It is one shell: `cd`, environment, a REPL you
+  started, a `gdb` you attached — all persist between your commands, exactly as
+  if the user had typed them. Start a program once, then talk to it.
+- **Output is cleaned, not raw:** colours and cursor sequences are stripped and a
+  line redrawn with carriage returns (progress bars) shows its final state. If
+  you need the raw bytes, ask the user to run the command with output to a file.
+- **It is the user's machine.** Treat it as you would their terminal: no
+  destructive commands without asking, and prefer the project's own scripts
+  (`make`, `./run-tests.sh`) over improvising.
+
+Stopping debug-bridge closes the window it opened (or the session it created)
+and nothing else. Flags and the wire format are in `tools/debug-bridge/README.md`.

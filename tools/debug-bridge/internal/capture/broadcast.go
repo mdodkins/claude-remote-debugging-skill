@@ -26,12 +26,22 @@ func NewBroadcaster(historySize int) *Broadcaster {
 // Add registers a client to receive subsequent broadcast lines, first replaying
 // the current scrollback to it. A client whose write fails during replay is not
 // registered.
-func (b *Broadcaster) Add(w io.Writer) {
+func (b *Broadcaster) Add(w io.Writer) { b.AddBanner(w, "") }
+
+// AddBanner is Add with a marker line written after the replayed scrollback
+// and before any live line, so a client can tell history from what happens
+// next (the local-window client relies on this). An empty banner writes none.
+func (b *Broadcaster) AddBanner(w io.Writer, banner string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, line := range b.history {
 		if _, err := w.Write([]byte(line + "\n")); err != nil {
 			return // client died during replay; don't register it
+		}
+	}
+	if banner != "" {
+		if _, err := w.Write([]byte(banner + "\n")); err != nil {
+			return
 		}
 	}
 	b.clients[w] = struct{}{}

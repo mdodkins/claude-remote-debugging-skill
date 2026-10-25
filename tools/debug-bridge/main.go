@@ -72,6 +72,7 @@ func main() {
 	baud := flag.Int("baud", 115200, "baud rate (C-Sound console is 115200 8N1)")
 	logPath := flag.String("log", "", "also append captured lines to this file")
 	tunnelTarget := flag.String("tunnel", "", "reverse-tunnel the stream to this SSH target, e.g. you@host.com — brings the tunnel up itself (prompts for your ssh password if you don't use keys)")
+	noEvict := flag.Bool("no-evict", false, "with -tunnel: if the server refuses a forwarded port, do not try to end your own stale session holding it; just retry")
 	tunnelPort := flag.Int("tunnel-port", 5555, "TCP port used on both ends of the serial tunnel")
 	gdbPort := flag.Int("gdb-port", 0, "also forward this port through the tunnel, e.g. 2331 for the J-Link GDB server (0 = serial only)")
 	listen := flag.String("listen", "", "local-only: serve the stream on this TCP address, e.g. :5555 (ignored when -tunnel is set)")
@@ -179,7 +180,7 @@ func main() {
 		if *localMode {
 			ports = append(ports, *localPort)
 		}
-		startTunnel(ctx, *tunnelTarget, ports)
+		startTunnel(ctx, *tunnelTarget, ports, !*noEvict)
 	}
 
 	if *localMode && *attach && !local.InsideTmux() {
@@ -214,33 +215,98 @@ func main() {
 	capture.Run(ctx, o, time.Now, emit, *reconnect)
 }
 
-// startTunnel launches the reverse SSH tunnel as a child process, forwarding
-// each of `ports` (the serial stream, and optionally the J-Link GDB port). It
-// inherits the terminal so ssh's own password prompt works, and warns loudly if
-// it exits.
-func startTunnel(ctx context.Context, target string, ports []int) {
+// startTunnel keeps the reverse SSH tunnel up for as long as the bridge runs,
+// forwarding each of `ports` (the serial stream, the J-Link GDB port, the
+// -local window). ssh inherits the terminal so its password prompt works.
+//
+// When ssh exits it is started again, with backoff. If it exited because the
+// server refused a forward, the port is almost always still held by this
+// user's own previous session, whose link died without a clean close (the
+// laptop moved from one uplink to another): sshd keeps that dead session, and
+// its listening port, until its own keepalive gives up, which by default is
+// hours. So before retrying, the bridge asks the server to end that stale
+// session (tunnel.EvictArgs: same user, sshd only, those ports only).
+// -no-evict turns that off.
+func startTunnel(ctx context.Context, target string, ports []int, evict bool) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		log.Fatalf("debug-bridge: -tunnel needs the `ssh` client on your PATH: %v", err)
 	}
+	go func() {
+		for attempt := 0; ; attempt++ {
+			start := time.Now()
+			refused := runTunnel(ctx, target, ports)
+			if ctx.Err() != nil {
+				return // our own shutdown killed it
+			}
+			if time.Since(start) > time.Minute {
+				attempt = 0 // it was up for a while: this is a fresh drop, not a retry storm
+			}
+			if refused && evict {
+				log.Printf("debug-bridge: the server refused port(s) %v, most likely held by your previous session that dropped; asking it to let go", ports)
+				evictStale(ctx, target, ports)
+			}
+			wait := tunnel.Backoff(attempt)
+			log.Printf("debug-bridge: WARNING — the ssh tunnel is down; capture continues locally. Reconnecting in %v.", wait)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+	}()
+}
+
+// runTunnel runs one ssh session until it exits, passing ssh's stderr through
+// to ours, and reports whether it died because a remote forward was refused.
+func runTunnel(ctx context.Context, target string, ports []int) (refused bool) {
 	args := tunnel.SSHArgs(target, ports...)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = os.Stdin   // let ssh prompt for a password if needed
 	cmd.Stdout = os.Stderr // keep our stdout (the captured stream) clean
-	cmd.Stderr = os.Stderr
-
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("debug-bridge: cannot read ssh's errors: %v", err)
+		return false
+	}
 	log.Printf("debug-bridge: opening reverse tunnel — ssh %s", strings.Join(args, " "))
 	log.Printf("debug-bridge: (enter your ssh password if prompted; forwarding ports %v to %s)", ports, target)
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("debug-bridge: failed to start ssh: %v", err)
+		log.Printf("debug-bridge: failed to start ssh: %v", err)
+		return false
 	}
-
-	go func() {
-		err := cmd.Wait()
-		if ctx.Err() != nil {
-			return // our own shutdown killed it
+	sc := bufio.NewScanner(stderr)
+	for sc.Scan() {
+		line := sc.Text()
+		fmt.Fprintln(os.Stderr, line)
+		if tunnel.ForwardFailed(line) {
+			refused = true
 		}
-		log.Printf("debug-bridge: WARNING — the ssh tunnel exited (%v). Capture continues locally, but the remote end is no longer receiving data. Common causes: wrong host or credentials, host unreachable, or a forwarded port %v already in use on the server.", err, ports)
-	}()
+	}
+	err = cmd.Wait()
+	if ctx.Err() == nil {
+		log.Printf("debug-bridge: the ssh tunnel exited (%v).", err)
+	}
+	return refused
+}
+
+// evictStale runs tunnel.EvictArgs once and logs what the server freed.
+func evictStale(ctx context.Context, target string, ports []int) {
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "ssh", tunnel.EvictArgs(target, ports...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			log.Printf("debug-bridge: server: %s", l)
+		}
+	}
+	if err != nil {
+		log.Printf("debug-bridge: could not clear the stale session (%v); will keep retrying until the server drops it", err)
+	} else if len(strings.TrimSpace(string(out))) == 0 {
+		log.Printf("debug-bridge: nothing of yours was holding %v; something else has the port, or it was already freed", ports)
+	}
 }
 
 // acceptLoop registers each incoming TCP client with the broadcaster.

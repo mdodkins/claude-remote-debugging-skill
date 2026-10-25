@@ -61,7 +61,21 @@ debug-bridge -port /dev/serial/by-id/... -tunnel you@agent-host.com -gdb-port 23
 It **warns clearly** if something's wrong rather than failing silently: ssh can't
 connect / auth fails, the remote port is already in use (via
 `ExitOnForwardFailure`), or the serial port is missing/busy. If the tunnel drops,
-capture keeps running locally and a warning is logged.
+capture keeps running locally, a warning is logged, and the tunnel is **brought
+back up by itself** (backoff 2, 4, 8, 16, then every 30 s).
+
+**A dropped link can leave the port held on the server.** If your machine's
+network goes away without a clean close (you unplug the 4G dongle it was using,
+or it moves from one uplink to another), the server's sshd keeps your old session,
+and its forwarded port, until its own keepalive gives up, which by default is
+hours. The next tunnel is then refused with `remote port forwarding failed`. When
+that happens the bridge makes one extra ssh call to end the stale session: it
+runs as you, so it can only see your own processes, and it kills only an `sshd`
+listening on the forwarded ports, nothing else. It logs what it freed, then
+reconnects. `-no-evict` turns this off and just keeps retrying.
+
+On a server you run yourself, the root fix is to make sshd drop dead clients
+quickly: `ClientAliveInterval 15` and `ClientAliveCountMax 3` in `sshd_config`.
 
 ## Usage — local only
 
@@ -117,6 +131,7 @@ and stop it (Ctrl-C) when you don't; stopping closes the window it opened.
 | `-baud` | `115200` | Baud rate (8N1). The C-Sound console is 115200 8N1. |
 | `-tunnel` | (none) | SSH target, e.g. `you@host`. Brings up a reverse tunnel to it and serves the stream there. Implies serving on `127.0.0.1:<tunnel-port>`. |
 | `-tunnel-port` | `5555` | TCP port used on both ends of the serial tunnel. |
+| `-no-evict` | off | With `-tunnel`: when the server refuses a forwarded port, don't end your own stale session holding it; just retry. |
 | `-gdb-port` | `0` | Also forward this port through the same tunnel, e.g. `2331` for the J-Link GDB server, so the agent gets **both** the serial console and the debug probe. `0` = serial only. |
 | `-log` | (none) | Also append captured lines to this file. |
 | `-listen` | (none) | Local-only: serve on this TCP address, e.g. `:5555` (ignored when `-tunnel` is set). |

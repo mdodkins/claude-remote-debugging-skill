@@ -317,7 +317,7 @@ func acceptLoop(ctx context.Context, ln net.Listener, bc *capture.Broadcaster) {
 		if err != nil {
 			return
 		}
-		bc.Add(&deadlineWriter{conn: conn})
+		bc.AddBanner(&deadlineWriter{conn: conn}, client.Banner)
 	}
 }
 

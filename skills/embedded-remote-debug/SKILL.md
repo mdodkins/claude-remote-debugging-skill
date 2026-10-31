@@ -144,6 +144,13 @@ A real target replies with a halt message and sane `pc`/`sp` values
 debug-request`). If this hangs or errors, the port is up at the TCP level
 but the server/probe isn't functional — troubleshoot before going further.
 
+A clean attach can still mean the probe has lost the core: OpenOCD `targets`
+showing state `reset`, or the flash base reading back as zeros. Healthy means
+`monitor reset halt` succeeds **and** the vector table reads back sane (initial
+SP inside RAM, reset vector odd and inside flash). Don't run this mid-capture:
+it halts the CPU. ST-Link quietly lowering the SWD speed (e.g. 480 kHz asked,
+200 kHz granted) is normal negotiation, not a fault.
+
 ## Troubleshooting (link not connecting)
 
 Work through these with the user — most needs checking *on their side*, you
@@ -355,6 +362,23 @@ theoretical):
   rather than individual hardcoded field addresses — GDB then resolves every
   field from the same struct the compiler used, removing the manual-arithmetic
   failure mode.
+- **Flush GDB's register cache after a reset done through `monitor`.**
+  `monitor reset halt` happens behind GDB's back, so GDB keeps showing the
+  pre-reset `pc`/`sp`. Run `maintenance flush register-cache` before reading
+  registers.
+- **Targets configured to connect under reset** (`reset_config ...
+  connect_assert_srst`) are still held in reset after attach, and memory reads
+  return garbage or zeros. `monitor reset halt` first, then read.
+- **`monitor halt` can time out silently on an idle target**, and a following
+  `dump`/`x` reads all zeros with no error. Use `monitor reset halt`, and check
+  the vector table (as in Step 2) before trusting any dump.
+- **`compare-sections` output gets mixed with OpenOCD console messages** when
+  it's chained with load/reset in one invocation. Run it as its own GDB
+  invocation once the target is quiet.
+- **Comparing a flash dump with an `objcopy -O binary` image:** gaps between
+  sections are 0xFF in flash and 0x00 in the objcopy image. Check that the
+  differing offsets fall inside inter-section gaps before calling it a
+  mismatch.
 
 **Hardware watchpoints are a powerful, line-number-independent tracing tool
 that's easy to forget.** Cortex-M's DWT unit supports a handful of hardware
@@ -644,6 +668,23 @@ the baud from the firmware's UART init (e.g. C-Sound is 115200 8N1).
 This pairs naturally with a live GDB session: watch the boot/config prints stream
 past while you step register settings, so firmware-reported state and on-target
 register state are visible side by side.
+
+**Waiting for a run to finish:** scrollback replay means a fresh `nc` sees the
+*previous* run's output first, including its "done" line, so a waiter keyed on
+a generic marker returns at once on stale output. Each client gets the line
+`[debug-bridge] --- live ---` after the replay; skip everything before it:
+
+```bash
+nc localhost 5555 | sed -n '/^\[debug-bridge\] --- live ---$/,$p' | grep -m1 '<done marker>'
+```
+
+If two runs can print the same marker (same build, same test), also anchor on
+something unique to this run, such as a nonce or start time the firmware prints.
+
+**Stopping a stale `nc`:** don't use `pkill -f 'nc localhost 5555'`. `-f`
+matches full command lines, including the agent's own shell running that
+command, so it kills the agent too. Find the PID (`pgrep -x nc`, then check its
+arguments) and `kill <pid>`.
 
 ## Local window: a shell on the user's machine (`debug-bridge -local`)
 

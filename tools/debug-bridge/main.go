@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -105,7 +106,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// SIGHUP too: closing the terminal must stop the bridge the same way, or
+	// its ssh outlives it and the server keeps the forwarded port.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	sinks := []func(string){func(l string) { fmt.Println(l) }}
@@ -180,7 +183,17 @@ func main() {
 		if *localMode {
 			ports = append(ports, *localPort)
 		}
-		startTunnel(ctx, *tunnelTarget, ports, !*noEvict)
+		tunnelGone := startTunnel(ctx, *tunnelTarget, ports, !*noEvict)
+		// Do not exit ahead of our own ssh: wait until it has been stopped and
+		// reaped, so the server sees the session close and frees the port.
+		defer func() {
+			stop()
+			select {
+			case <-tunnelGone:
+			case <-time.After(5 * time.Second):
+				log.Printf("debug-bridge: WARNING — the ssh tunnel did not stop in time; the server may keep the port for a while")
+			}
+		}()
 	}
 
 	if *localMode && *attach && !local.InsideTmux() {
@@ -227,11 +240,16 @@ func main() {
 // hours. So before retrying, the bridge asks the server to end that stale
 // session (tunnel.EvictArgs: same user, sshd only, those ports only).
 // -no-evict turns that off.
-func startTunnel(ctx context.Context, target string, ports []int, evict bool) {
+//
+// The returned channel closes once the bridge is shutting down and its ssh has
+// been stopped and reaped.
+func startTunnel(ctx context.Context, target string, ports []int, evict bool) <-chan struct{} {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		log.Fatalf("debug-bridge: -tunnel needs the `ssh` client on your PATH: %v", err)
 	}
+	gone := make(chan struct{})
 	go func() {
+		defer close(gone)
 		for attempt := 0; ; attempt++ {
 			start := time.Now()
 			refused := runTunnel(ctx, target, ports)
@@ -254,13 +272,19 @@ func startTunnel(ctx context.Context, target string, ports []int, evict bool) {
 			}
 		}
 	}()
+	return gone
 }
 
 // runTunnel runs one ssh session until it exits, passing ssh's stderr through
 // to ours, and reports whether it died because a remote forward was refused.
 func runTunnel(ctx context.Context, target string, ports []int) (refused bool) {
+	// tieToBridge's kernel signal follows this thread, so keep it until ssh
+	// has exited.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	args := tunnel.SSHArgs(target, ports...)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
+	tieToBridge(cmd)
 	cmd.Stdin = os.Stdin   // let ssh prompt for a password if needed
 	cmd.Stdout = os.Stderr // keep our stdout (the captured stream) clean
 	stderr, err := cmd.StderrPipe()
